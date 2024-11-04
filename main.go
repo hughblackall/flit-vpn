@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -9,29 +10,34 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
+	"runtime"
 
 	"github.com/digitalocean/godo"
 	"github.com/spf13/cobra"
 	"golang.org/x/oauth2"
 )
 
-var (
-	clientID     = "YOUR_DIGITALOCEAN_CLIENT_ID"
-	clientSecret = "YOUR_DIGITALOCEAN_CLIENT_SECRET"
-	authFile     = filepath.Join(os.TempDir(), "flit_cli_auth.json")
-	oauthConfig  *oauth2.Config
-	token        *oauth2.Token
+const (
+	clientID = "e6d00a6c53b4f4b63ae0156c8e09c4957caeb382d5b63f8b301f710f9aadcbe6" // Only client ID is needed
+	authFile = "flit_cli_auth.json"
 
 	appName = "flit-vpn" // Constant application name
+)
+
+// OAuth2 variables
+var (
+	oauthConfig   *oauth2.Config
+	token         *oauth2.Token
+	state         string
+	codeVerifier  string // For PKCE
+	codeChallenge string // Hashed version of codeVerifier
 )
 
 func main() {
 	rootCmd := &cobra.Command{Use: "flit"}
 	oauthConfig = &oauth2.Config{
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
-		Scopes:       []string{"read", "write"},
+		ClientID: clientID,
+		Scopes:   []string{"read", "write"},
 		Endpoint: oauth2.Endpoint{
 			AuthURL:  "https://cloud.digitalocean.com/v1/oauth/authorize",
 			TokenURL: "https://cloud.digitalocean.com/v1/oauth/token",
@@ -57,39 +63,86 @@ func main() {
 		Run:   destroyApp,
 	}
 
-	// Completion command
-	completionCmd := &cobra.Command{
-		Use:   "completion [shell]",
-		Short: "Generate shell completions for bash, zsh, or fish",
-		Args:  cobra.ExactArgs(1),
-		Run:   generateCompletion,
-	}
-	rootCmd.AddCommand(loginCmd, upCmd, downCmd, completionCmd)
+	// // Completion command
+	// completionCmd := &cobra.Command{
+	// 	Use:   "completion [shell]",
+	// 	Short: "Generate shell completions for bash, zsh, or fish",
+	// 	Args:  cobra.ExactArgs(1),
+	// 	Run:   generateCompletion,
+	// }
 
-	cobra.OnInitialize(setRegionCompletion)
+	rootCmd.AddCommand(loginCmd, upCmd, downCmd) //, completionCmd)
+
+	// cobra.OnInitialize(setRegionCompletion)
 
 	if err := rootCmd.Execute(); err != nil {
 		log.Fatal(err)
 	}
 }
 
-// Login function to initiate OAuth2 flow
-func login(cmd *cobra.Command, args []string) {
-	port := getRandomPort()
-	redirectURI := fmt.Sprintf("http://localhost:%d/oauth/callback", port)
-	oauthConfig.RedirectURL = redirectURI
+// Generate a random code verifier
+func generateCodeVerifier() string { // , error
+	// bytes := make([]byte, 32)
+	// if _, err := rand.Read(bytes); err != nil {
+	// 	return "", err
+	// }
+	// return base64.RawURLEncoding.EncodeToString(bytes), nil
+	return oauth2.GenerateVerifier()
+}
 
-	url := oauthConfig.AuthCodeURL("state", oauth2.AccessTypeOffline)
-	fmt.Println("Opening browser for authorization...")
-	if err := exec.Command("xdg-open", url).Start(); err != nil {
-		fmt.Printf("Error opening browser: %v\n", err)
-		return
+// Generate code challenge from the code verifier
+func generateCodeChallenge(codeVerifier string) string {
+	// hasher := sha256.New()
+	// hasher.Write([]byte(codeVerifier))
+	// return base64.RawURLEncoding.EncodeToString(hasher.Sum(nil))
+	return oauth2.S256ChallengeFromVerifier(codeVerifier)
+}
+
+func generateSecureRandomString(length int) string {
+	characters := []byte("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+
+	b := make([]byte, length)
+	rand.Read(b)
+
+	// Convert bytes to printable string
+	for i := 0; i < len(b); i++ {
+		b[i] = characters[b[i]%byte(len(characters))]
 	}
 
+	return string(b)
+}
+
+// Login function for PKCE authentication
+func login(cmd *cobra.Command, args []string) {
+	var err error
+
+	// Generate code verifier and code challenge
+	codeVerifier = generateCodeVerifier()
+	// if err != nil {
+	// 	log.Fatalf("Failed to generate code verifier: %v", err)
+	// }
+	codeChallenge = generateCodeChallenge(codeVerifier)
+	state = generateSecureRandomString(32)
+
+	// Dynamic port allocation for redirect URI
+	port := 8080 // getRandomPort()
+	oauthConfig.RedirectURL = fmt.Sprintf("http://localhost:%d/oauth/callback", port)
+
+	// Authorization URL
+	// url := oauthConfig.AuthCodeURL(codeChallenge, oauth2.AccessTypeOffline)
+	url := oauthConfig.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.S256ChallengeOption(codeVerifier), oauth2.SetAuthURLParam("response_type", "token"))
+	fmt.Println("Opening browser for authorization...")
+	err = openBrowser(url)
+	if err != nil {
+		log.Fatalf("Error opening browser: %v", err)
+	}
+
+	// Handle callback
 	http.HandleFunc("/oauth/callback", handleCallback)
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", port), nil))
 }
 
+// Handle OAuth2 callback to exchange authorization code for tokens
 func handleCallback(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
 	if code == "" {
@@ -97,18 +150,37 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// TODO: Check state query parameter and verify it matches the state parameter sent in previous request
+
+	// Exchange the authorization code for an access token
 	ctx := context.Background()
-	tok, err := oauthConfig.Exchange(ctx, code)
+	token, err := oauthConfig.Exchange(ctx, code, oauth2.VerifierOption(codeVerifier)) // oauth2.SetAuthURLParam("code_verifier", codeVerifier),
 	if err != nil {
 		http.Error(w, "Failed to exchange token: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	token = tok
 	saveToken(token)
 
 	fmt.Fprintln(w, "Login successful! You may close this window.")
 	fmt.Println("Authentication successful. Token saved.")
+}
+
+func openBrowser(url string) error {
+	var err error
+
+	switch runtime.GOOS {
+	case "linux":
+		err = exec.Command("xdg-open", url).Start()
+	case "windows":
+		err = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+	case "darwin":
+		err = exec.Command("open", url).Start()
+	default:
+		err = fmt.Errorf("unsupported platform")
+	}
+
+	return err
 }
 
 // Get a DigitalOcean client, checking for authentication
@@ -129,6 +201,10 @@ func deployApp(cmd *cobra.Command, args []string) {
 	client := getClient()
 	ctx := context.TODO()
 	region := args[0]
+	appSpec := &godo.AppSpec{
+		Name:   appName,
+		Region: region,
+	}
 
 	app, err := findAppByName(ctx, client)
 	if err != nil {
@@ -138,10 +214,7 @@ func deployApp(cmd *cobra.Command, args []string) {
 	if app != nil {
 		fmt.Println("Application exists, updating...")
 		_, _, err := client.Apps.Update(ctx, app.ID, &godo.AppUpdateRequest{
-			Spec: &godo.AppSpec{
-				Name:   appName,
-				Region: region,
-			},
+			Spec: appSpec,
 		})
 		if err != nil {
 			log.Fatalf("Failed to update app: %v", err)
@@ -153,7 +226,7 @@ func deployApp(cmd *cobra.Command, args []string) {
 			Name:   appName,
 			Region: region,
 		}
-		_, _, err := client.Apps.Create(ctx, appSpec)
+		_, _, err := client.Apps.Create(ctx, &godo.AppCreateRequest{Spec: appSpec})
 		if err != nil {
 			log.Fatalf("Failed to create app: %v", err)
 		}
