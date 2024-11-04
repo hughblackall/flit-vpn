@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -139,6 +140,7 @@ func login(cmd *cobra.Command, args []string) {
 
 	// Handle callback
 	http.HandleFunc("/oauth/callback", handleCallback)
+	http.HandleFunc("/oauth/access_token", handleAccessToken)
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", port), nil))
 }
 
@@ -152,18 +154,35 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 
 	// TODO: Check state query parameter and verify it matches the state parameter sent in previous request
 
-	// Exchange the authorization code for an access token
-	ctx := context.Background()
-	token, err := oauthConfig.Exchange(ctx, code, oauth2.VerifierOption(codeVerifier)) // oauth2.SetAuthURLParam("code_verifier", codeVerifier),
+	// // Exchange the authorization code for an access token
+	// ctx := context.Background()
+	// token, err := oauthConfig.Exchange(ctx, code, oauth2.VerifierOption(codeVerifier)) // oauth2.SetAuthURLParam("code_verifier", codeVerifier),
+	// if err != nil {
+	// 	http.Error(w, "Failed to exchange token: "+err.Error(), http.StatusInternalServerError)
+	// 	return
+	// }
+
+	// saveToken(token)
+
+	// fmt.Fprintln(w, "Login successful! You may close this window.")
+	// fmt.Println("Authentication successful. Token saved.")
+
+	fmt.Fprintln(w, "<html><body><script>ajax = new XMLHttpRequest();ajax.open('POST', '/oauth/access_token');ajax.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');ajax.send('code="+code+"');</script></body></html>")
+}
+
+func handleAccessToken(w http.ResponseWriter, r *http.Request) {
+	r.ParseForm()
+
+	accessToken, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, "Failed to exchange token: "+err.Error(), http.StatusInternalServerError)
-		return
+		log.Fatalf("Error reading access token from ajax request: %v", err)
+	}
+
+	if err := json.Unmarshal(accessToken, &token); err != nil {
+		log.Fatalf("Error unmarshalling access token: %v", err)
 	}
 
 	saveToken(token)
-
-	fmt.Fprintln(w, "Login successful! You may close this window.")
-	fmt.Println("Authentication successful. Token saved.")
 }
 
 func openBrowser(url string) error {
