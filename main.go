@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"syscall"
 
 	"github.com/digitalocean/godo"
@@ -226,9 +227,9 @@ func saveToken(creds credentials) {
 		log.Fatalf("Failed to save token: %v", err)
 	}
 
-	fmt.Print(string(data))
+	configDir := createConfigDirectory()
 
-	if err := os.WriteFile(authFile, []byte(data), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, authFile), []byte(data), 0600); err != nil {
 		log.Fatalf("Failed to write token to file: %v", err)
 	}
 }
@@ -247,4 +248,20 @@ func loadToken() error {
 	return nil
 
 	// TODO: Check if tokens are specified in environment and use those instead
+}
+
+// Create config directory if it doesn't already exist
+func createConfigDirectory() string {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	configDir := filepath.Join(homeDir, ".flit-vpn")
+
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		log.Fatalf("Failed to create config directory: %v", err)
+	}
+
+	return configDir
 }
