@@ -5,45 +5,33 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"net"
-	"net/http"
 	"os"
-	"os/exec"
-	"runtime"
+	"syscall"
 
 	"github.com/digitalocean/godo"
 	"github.com/spf13/cobra"
-	"golang.org/x/oauth2"
+	"golang.org/x/term"
 )
 
 const (
 	clientID = "e6d00a6c53b4f4b63ae0156c8e09c4957caeb382d5b63f8b301f710f9aadcbe6" // Only client ID is needed
-	authFile = "flit_cli_auth.json"
+	authFile = "credentials"
 
 	appName = "flit-vpn" // Constant application name
 )
 
-// OAuth2 variables
+type credentials struct {
+	DigitalOceanToken string
+	TailscaleKey      string
+}
+
 var (
-	oauthConfig   *oauth2.Config
-	token         *oauth2.Token
-	state         string
-	codeVerifier  string // For PKCE
-	codeChallenge string // Hashed version of codeVerifier
+	creds credentials
 )
 
 func main() {
 	rootCmd := &cobra.Command{Use: "flit"}
-	oauthConfig = &oauth2.Config{
-		ClientID: clientID,
-		Scopes:   []string{"read", "write"},
-		Endpoint: oauth2.Endpoint{
-			AuthURL:  "https://cloud.digitalocean.com/v1/oauth/authorize",
-			TokenURL: "https://cloud.digitalocean.com/v1/oauth/token",
-		},
-	}
 
 	// CLI Commands
 	loginCmd := &cobra.Command{
@@ -81,24 +69,6 @@ func main() {
 	}
 }
 
-// Generate a random code verifier
-func generateCodeVerifier() string { // , error
-	// bytes := make([]byte, 32)
-	// if _, err := rand.Read(bytes); err != nil {
-	// 	return "", err
-	// }
-	// return base64.RawURLEncoding.EncodeToString(bytes), nil
-	return oauth2.GenerateVerifier()
-}
-
-// Generate code challenge from the code verifier
-func generateCodeChallenge(codeVerifier string) string {
-	// hasher := sha256.New()
-	// hasher.Write([]byte(codeVerifier))
-	// return base64.RawURLEncoding.EncodeToString(hasher.Sum(nil))
-	return oauth2.S256ChallengeFromVerifier(codeVerifier)
-}
-
 func generateSecureRandomString(length int) string {
 	characters := []byte("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
 
@@ -113,106 +83,44 @@ func generateSecureRandomString(length int) string {
 	return string(b)
 }
 
-// Login function for PKCE authentication
 func login(cmd *cobra.Command, args []string) {
-	var err error
 
-	// Generate code verifier and code challenge
-	codeVerifier = generateCodeVerifier()
-	// if err != nil {
-	// 	log.Fatalf("Failed to generate code verifier: %v", err)
-	// }
-	codeChallenge = generateCodeChallenge(codeVerifier)
-	state = generateSecureRandomString(32)
-
-	// Dynamic port allocation for redirect URI
-	port := 8080 // getRandomPort()
-	oauthConfig.RedirectURL = fmt.Sprintf("http://localhost:%d/oauth/callback", port)
-
-	// Authorization URL
-	// url := oauthConfig.AuthCodeURL(codeChallenge, oauth2.AccessTypeOffline)
-	url := oauthConfig.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.S256ChallengeOption(codeVerifier), oauth2.SetAuthURLParam("response_type", "token"))
-	fmt.Println("Opening browser for authorization...")
-	err = openBrowser(url)
+	// Get token from user input
+	fmt.Print("Enter a DigitalOcean personal access token: ")
+	input, err := term.ReadPassword(int(syscall.Stdin))
 	if err != nil {
-		log.Fatalf("Error opening browser: %v", err)
+		log.Fatalf("Failed to read DigitalOcean token: %v", err)
 	}
+	creds.DigitalOceanToken = string(input)
 
-	// Handle callback
-	http.HandleFunc("/oauth/callback", handleCallback)
-	http.HandleFunc("/oauth/access_token", handleAccessToken)
-	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", port), nil))
-}
-
-// Handle OAuth2 callback to exchange authorization code for tokens
-func handleCallback(w http.ResponseWriter, r *http.Request) {
-	code := r.URL.Query().Get("code")
-	if code == "" {
-		http.Error(w, "Authorization code not found", http.StatusBadRequest)
-		return
-	}
-
-	// TODO: Check state query parameter and verify it matches the state parameter sent in previous request
-
-	// // Exchange the authorization code for an access token
-	// ctx := context.Background()
-	// token, err := oauthConfig.Exchange(ctx, code, oauth2.VerifierOption(codeVerifier)) // oauth2.SetAuthURLParam("code_verifier", codeVerifier),
-	// if err != nil {
-	// 	http.Error(w, "Failed to exchange token: "+err.Error(), http.StatusInternalServerError)
-	// 	return
-	// }
-
-	// saveToken(token)
-
-	// fmt.Fprintln(w, "Login successful! You may close this window.")
-	// fmt.Println("Authentication successful. Token saved.")
-
-	fmt.Fprintln(w, "<html><body><script>ajax = new XMLHttpRequest();ajax.open('POST', '/oauth/access_token');ajax.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');ajax.send('code="+code+"');</script></body></html>")
-}
-
-func handleAccessToken(w http.ResponseWriter, r *http.Request) {
-	r.ParseForm()
-
-	accessToken, err := io.ReadAll(r.Body)
+	fmt.Print("\nEnter a Tailscale auth key: ")
+	input, err = term.ReadPassword(int(syscall.Stdin))
 	if err != nil {
-		log.Fatalf("Error reading access token from ajax request: %v", err)
+		log.Fatalf("Failed to read Tailscale auth key: %v", err)
 	}
+	creds.TailscaleKey = string(input)
 
-	if err := json.Unmarshal(accessToken, &token); err != nil {
-		log.Fatalf("Error unmarshalling access token: %v", err)
-	}
-
-	saveToken(token)
-}
-
-func openBrowser(url string) error {
-	var err error
-
-	switch runtime.GOOS {
-	case "linux":
-		err = exec.Command("xdg-open", url).Start()
-	case "windows":
-		err = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
-	case "darwin":
-		err = exec.Command("open", url).Start()
-	default:
-		err = fmt.Errorf("unsupported platform")
-	}
-
-	return err
+	saveToken(creds)
 }
 
 // Get a DigitalOcean client, checking for authentication
 func getClient() *godo.Client {
-	if token == nil {
-		if !loadToken() {
+	if len(creds.DigitalOceanToken) == 0 {
+		if loadToken() != nil {
 			fmt.Println("Please log in first by running 'flit login'")
 			os.Exit(1)
 		}
 	}
-	tokenSource := oauth2.StaticTokenSource(token)
-	oauthClient := oauth2.NewClient(context.Background(), tokenSource)
-	return godo.NewClient(oauthClient)
+	return godo.NewFromToken(creds.DigitalOceanToken)
+}
+
+// Check for tailscale auth key
+func getTailscaleKey() string {
+	if len(creds.TailscaleKey) == 0 {
+		fmt.Println("Please log in first by running 'flit login'")
+		os.Exit(1)
+	}
+	return creds.TailscaleKey
 }
 
 // Deploys or updates the application
@@ -220,9 +128,45 @@ func deployApp(cmd *cobra.Command, args []string) {
 	client := getClient()
 	ctx := context.TODO()
 	region := args[0]
+
 	appSpec := &godo.AppSpec{
 		Name:   appName,
 		Region: region,
+		Alerts: []*godo.AppAlertSpec{
+			{Rule: "DEPLOYMENT_FAILED"},
+			{Rule: "DOMAIN_FAILED"},
+		},
+		Workers: []*godo.AppWorkerSpec{
+			{
+				Name:             "tailscale",
+				InstanceCount:    1,
+				InstanceSizeSlug: "apps-s-1vcpu-0.5gb",
+				Image: &godo.ImageSourceSpec{
+					Registry:     "tailscale",
+					RegistryType: "DOCKER_HUB",
+					Repository:   "tailscale",
+					Tag:          "stable",
+				},
+				Envs: []*godo.AppVariableDefinition{
+					{
+						Key:   "TS_AUTHKEY",
+						Scope: "RUN_AND_BUILD_TIME",
+						Type:  "SECRET",
+						Value: getTailscaleKey(),
+					},
+					{
+						Key:   "TS_EXTRA_ARGS",
+						Scope: "RUN_AND_BUILD_TIME",
+						Value: "--advertise-exit-node --advertise-tags=tag:digitalocean-exit-node",
+					},
+					{
+						Key:   "TS_HOSTNAME",
+						Scope: "RUN_AND_BUILD_TIME",
+						Value: fmt.Sprintf("digitalocean-%s", region),
+					},
+				},
+			},
+		},
 	}
 
 	app, err := findAppByName(ctx, client)
@@ -231,25 +175,21 @@ func deployApp(cmd *cobra.Command, args []string) {
 	}
 
 	if app != nil {
-		fmt.Println("Application exists, updating...")
+		fmt.Println("Tailscale node exists, updating...")
 		_, _, err := client.Apps.Update(ctx, app.ID, &godo.AppUpdateRequest{
 			Spec: appSpec,
 		})
 		if err != nil {
-			log.Fatalf("Failed to update app: %v", err)
+			log.Fatalf("Failed to update the node: %v", err)
 		}
 		fmt.Println("App updated and redeployed successfully.")
 	} else {
-		fmt.Println("Creating new application...")
-		appSpec := &godo.AppSpec{
-			Name:   appName,
-			Region: region,
-		}
+		fmt.Println("Creating new Tailscale node...")
 		_, _, err := client.Apps.Create(ctx, &godo.AppCreateRequest{Spec: appSpec})
 		if err != nil {
-			log.Fatalf("Failed to create app: %v", err)
+			log.Fatalf("Failed to create node: %v", err)
 		}
-		fmt.Println("App created and deployed successfully.")
+		fmt.Println("Node created successfully.")
 	}
 }
 
@@ -260,18 +200,18 @@ func destroyApp(cmd *cobra.Command, args []string) {
 
 	app, err := findAppByName(ctx, client)
 	if err != nil {
-		log.Fatalf("Error checking existing apps: %v", err)
+		log.Fatalf("Error checking existing Flit Tailscale nodes: %v", err)
 	}
 	if app == nil {
-		fmt.Println("Application does not exist.")
+		fmt.Println("No Flit Tailscale nodes exist.")
 		return
 	}
 
 	_, err = client.Apps.Delete(ctx, app.ID)
 	if err != nil {
-		log.Fatalf("Failed to delete app: %v", err)
+		log.Fatalf("Failed to delete Tailscale node: %v", err)
 	}
-	fmt.Println("App deleted successfully.")
+	fmt.Println("Tailscale node deleted successfully.")
 }
 
 // Find app by name
@@ -330,34 +270,32 @@ func getAllRegions(ctx context.Context, client *godo.Client) ([]string, error) {
 	return regionNames, nil
 }
 
-// Generate a random port for OAuth callback
-func getRandomPort() int {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		log.Fatal("Error finding open port:", err)
-	}
-	defer listener.Close()
-	return listener.Addr().(*net.TCPAddr).Port
-}
-
-// Token management
-func saveToken(token *oauth2.Token) {
-	data, err := json.Marshal(token)
+// Credentials management
+func saveToken(creds credentials) {
+	data, err := json.Marshal(creds)
 	if err != nil {
 		log.Fatalf("Failed to save token: %v", err)
 	}
-	if err := os.WriteFile(authFile, data, 0600); err != nil {
+
+	fmt.Print(string(data))
+
+	if err := os.WriteFile(authFile, []byte(data), 0600); err != nil {
 		log.Fatalf("Failed to write token to file: %v", err)
 	}
 }
 
-func loadToken() bool {
+func loadToken() error {
 	data, err := os.ReadFile(authFile)
 	if err != nil {
-		return false
+		return err
 	}
-	if err := json.Unmarshal(data, &token); err != nil {
-		return false
+
+	err = json.Unmarshal(data, &creds)
+	if err != nil {
+		return err
 	}
-	return true
+
+	return nil
+
+	// TODO: Check if tokens are specified in environment and use those instead
 }
