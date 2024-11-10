@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -21,6 +20,21 @@ const (
 	appName = "flit-vpn" // Constant application name
 )
 
+var digitalOceanRegions = []string{
+	"nyc1\tNew York City, United States",
+	"nyc2\tNew York City, United States",
+	"nyc3\tNew York City, United States",
+	"ams3\tAmsterdam, the Netherlands",
+	"sfo2\tSan Francisco, United States",
+	"sfo3\tSan Francisco, United States",
+	"sgp1\tSingapore",
+	"lon1\tLondon, United Kingdom",
+	"fra1\tFrankfurt, Germany",
+	"tor1\tToronto, Canada",
+	"blr1\tBangalore, India",
+	"syd1\tSydney, Australia",
+}
+
 type credentials struct {
 	DigitalOceanToken string
 	TailscaleKey      string
@@ -36,51 +50,28 @@ func main() {
 	// CLI Commands
 	loginCmd := &cobra.Command{
 		Use:   "login",
-		Short: "Authenticate with DigitalOcean using OAuth2",
+		Short: "Authenticate with DigitalOcean and Tailscale",
 		Run:   login,
 	}
 
 	upCmd := &cobra.Command{
-		Use:   "up [region]",
-		Short: "Create or update the deployment",
-		Args:  cobra.ExactArgs(1),
-		Run:   deployApp,
+		Use:       "up [region]",
+		Short:     "Create or update the Flit Tailscale node",
+		Args:      cobra.ExactArgs(1),
+		ValidArgs: digitalOceanRegions,
+		Run:       deployApp,
 	}
 	downCmd := &cobra.Command{
 		Use:   "down",
-		Short: "Tear down the deployment",
+		Short: "Remove the Flit Tailscale node",
 		Run:   destroyApp,
 	}
 
-	// // Completion command
-	// completionCmd := &cobra.Command{
-	// 	Use:   "completion [shell]",
-	// 	Short: "Generate shell completions for bash, zsh, or fish",
-	// 	Args:  cobra.ExactArgs(1),
-	// 	Run:   generateCompletion,
-	// }
-
-	rootCmd.AddCommand(loginCmd, upCmd, downCmd) //, completionCmd)
-
-	// cobra.OnInitialize(setRegionCompletion)
+	rootCmd.AddCommand(loginCmd, upCmd, downCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		log.Fatal(err)
 	}
-}
-
-func generateSecureRandomString(length int) string {
-	characters := []byte("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
-
-	b := make([]byte, length)
-	rand.Read(b)
-
-	// Convert bytes to printable string
-	for i := 0; i < len(b); i++ {
-		b[i] = characters[b[i]%byte(len(characters))]
-	}
-
-	return string(b)
 }
 
 func login(cmd *cobra.Command, args []string) {
@@ -226,48 +217,6 @@ func findAppByName(ctx context.Context, client *godo.Client) (*godo.App, error) 
 		}
 	}
 	return nil, nil
-}
-
-// Generate shell completion script for a specific shell and print to stdout
-func generateCompletion(cmd *cobra.Command, args []string) {
-	shell := args[0]
-	switch shell {
-	case "bash":
-		cmd.Root().GenBashCompletion(os.Stdout)
-	case "zsh":
-		cmd.Root().GenZshCompletion(os.Stdout)
-	case "fish":
-		cmd.Root().GenFishCompletion(os.Stdout, true)
-	default:
-		fmt.Printf("Unsupported shell: %s\n", shell)
-	}
-}
-
-// Sets dynamic completion for the region argument with DigitalOcean regions
-func setRegionCompletion() {
-	upCmd := &cobra.Command{}
-	client := getClient()
-	ctx := context.TODO()
-	regions, err := getAllRegions(ctx, client)
-	if err != nil {
-		log.Fatalf("Failed to get regions: %v", err)
-	}
-	upCmd.RegisterFlagCompletionFunc("region", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		return regions, cobra.ShellCompDirectiveDefault
-	})
-}
-
-// Fetch all DigitalOcean regions for completion
-func getAllRegions(ctx context.Context, client *godo.Client) ([]string, error) {
-	regions, _, err := client.Regions.List(ctx, &godo.ListOptions{})
-	if err != nil {
-		return nil, err
-	}
-	var regionNames []string
-	for _, region := range regions {
-		regionNames = append(regionNames, region.Slug)
-	}
-	return regionNames, nil
 }
 
 // Credentials management

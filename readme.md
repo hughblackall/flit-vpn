@@ -38,6 +38,7 @@ and enter a [DigitalOcean personal access token](https://docs.digitalocean.com/r
 
  - Other cloud providers for node deployment
  - Environment variables for authentication tokens, enabling use in scripting environments
+ - Support for more than one exit node
 
 ## A note on third party VPNs
 
