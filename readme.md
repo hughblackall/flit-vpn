@@ -2,7 +2,7 @@
 
 FlitVPN is a simple, low-cost solution to extend your [Tailscale](https://tailscale.com/) network to operate as an international VPN.
 
-By temporarily deploying Tailscale exit nodes on cloud infrastructure, FlitVPN allows you to route traffic through regions outside your local network. This setup is ideal for routing traffic through, and accessing content from, different geographic locations—without the commitment of a third-party VPN subscription.
+By temporarily deploying Tailscale [exit nodes](https://tailscale.com/kb/1103/exit-nodes) on cloud infrastructure, FlitVPN allows you to route traffic through regions outside your local network. This setup is ideal for routing traffic through, and accessing content from, different geographic locations—without the commitment of a third-party VPN subscription.
 
 For now, FlitVPN only supports deploying nodes to DigitalOcean.
 
