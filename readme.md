@@ -34,6 +34,61 @@ flit login
 and enter a [DigitalOcean personal access token](https://docs.digitalocean.com/reference/api/create-personal-access-token/) and a [Tailscale auth key](https://tailscale.com/kb/1085/auth-keys) and you're ready to go!
 
 
+## Completions
+
+To load completions:
+
+### Bash
+
+```bash
+source < (flit completion bash)
+```
+
+To load completions for each session, execute once:
+
+```bash
+# Linux
+flit completion bash > /etc/bash_completion.d/flit-vpn
+
+# macOS
+flit completion bash > $(brew --prefix)/etc/bash_completion.d/flit-vpn
+```
+
+### Zsh
+
+To load completions for each session, execute once:
+
+```bash
+flit completion zsh > "${fpath[1]}/_%[1]s"
+```
+
+### Fish
+
+```fish
+flit completion fish | source
+```
+
+To load completions for each session, execute once:
+
+```fish
+flit completion fish > ~/.config/fish/completions/flit-vpn.fish
+```
+
+### PowerShell
+
+```powershell
+PS> flit completion powershell | Out-String | Invoke-Expression
+```
+
+To load completions for every new session, run:
+
+```
+PS> flit completion powershell > flit-vpn.ps1
+```
+
+and source this file from your PowerShell profile.
+
+
 ## Possible Future Features
 
  - Other cloud providers for node deployment
