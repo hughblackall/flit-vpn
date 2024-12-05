@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	clientID = "e6d00a6c53b4f4b63ae0156c8e09c4957caeb382d5b63f8b301f710f9aadcbe6" // Only client ID is needed
-	authFile = "credentials"
+	clientID     = "e6d00a6c53b4f4b63ae0156c8e09c4957caeb382d5b63f8b301f710f9aadcbe6" // Only client ID is needed
+	authFileName = "credentials"
 
 	appName = "flit-vpn" // Constant application name
 )
@@ -68,6 +68,8 @@ func main() {
 		Run:   destroyApp,
 	}
 
+	// TODO: Add status command to check if node is running
+
 	rootCmd.AddCommand(loginCmd, upCmd, downCmd)
 
 	if err := rootCmd.Execute(); err != nil {
@@ -116,6 +118,7 @@ func getTailscaleKey() string {
 }
 
 // Deploys or updates the application
+// TODO: Create a specific project for the app and encapsulate deployment within
 func deployApp(cmd *cobra.Command, args []string) {
 	client := getClient()
 	ctx := context.TODO()
@@ -174,7 +177,7 @@ func deployApp(cmd *cobra.Command, args []string) {
 		if err != nil {
 			log.Fatalf("Failed to update the node: %v", err)
 		}
-		fmt.Println("App updated and redeployed successfully.")
+		fmt.Println("Node updated and redeployed successfully.")
 	} else {
 		fmt.Println("Creating new Tailscale node...")
 		_, _, err := client.Apps.Create(ctx, &godo.AppCreateRequest{Spec: appSpec})
@@ -229,13 +232,14 @@ func saveToken(creds credentials) {
 
 	configDir := createConfigDirectory()
 
-	if err := os.WriteFile(filepath.Join(configDir, authFile), []byte(data), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, authFileName), []byte(data), 0600); err != nil {
 		log.Fatalf("Failed to write token to file: %v", err)
 	}
 }
 
 func loadToken() error {
-	data, err := os.ReadFile(authFile)
+	configDir := buildConfigDirPath()
+	data, err := os.ReadFile(filepath.Join(configDir, authFileName))
 	if err != nil {
 		return err
 	}
@@ -250,14 +254,19 @@ func loadToken() error {
 	// TODO: Check if tokens are specified in environment and use those instead
 }
 
-// Create config directory if it doesn't already exist
-func createConfigDirectory() string {
+// Build config directory based on user's home directory
+func buildConfigDirPath() string {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	configDir := filepath.Join(homeDir, ".flit-vpn")
+	return filepath.Join(homeDir, ".flit-vpn")
+}
+
+// Create config directory if it doesn't already exist
+func createConfigDirectory() string {
+	configDir := buildConfigDirPath()
 
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		log.Fatalf("Failed to create config directory: %v", err)
